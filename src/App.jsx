@@ -3,7 +3,7 @@ import { Mic, MicOff, CheckCircle, ChevronRight, User, Calendar, Phone, Stethosc
 
 // --- CONFIGURATION ---
 const DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1453637431629975633/4iR14c4AHq_OLoy1iWJqHeZrsAUpsbwDrSTb45KVy99zCzM5hNM7vTWDisUUW_bDIgNU";
-const GEMINI_API_KEY = "";
+const GEMINI_API_KEY = ""; // System provides this at runtime or via Vercel Env
 const GEMINI_MODEL = "gemini-2.5-flash-preview-09-2025";
 
 const STEPS = [
@@ -50,8 +50,6 @@ const App = () => {
           systemInstruction: { parts: [{ text: systemPrompt }] }
         })
       });
-
-      if (!response.ok) throw new Error('AI 분석 오류');
       const data = await response.json();
       const summary = data.candidates?.[0]?.content?.parts?.[0]?.text || rawText;
       setFormData(prev => ({ ...prev, symptomsSummary: summary }));
@@ -81,9 +79,7 @@ const App = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ embeds: [embed] })
       });
-    } catch (err) {
-      console.error(err);
-    }
+    } catch (err) { console.error(err); }
   };
 
   const speak = useCallback((text) => {
@@ -102,7 +98,10 @@ const App = () => {
 
   const startListening = () => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRecognition) return;
+    if (!SpeechRecognition) {
+      setError("크롬 브라우저를 사용해 주세요.");
+      return;
+    }
     if (isListening) return;
     const recognition = new SpeechRecognition();
     recognition.lang = 'ko-KR';
@@ -112,21 +111,21 @@ const App = () => {
     recognition.onstart = () => setIsListening(true);
     recognition.onresult = (event) => {
       const isFinalResult = event.results[event.results.length - 1].isFinal;
-      const latestTranscript = event.results[event.results.length - 1][0].transcript.trim();
+      const latestText = event.results[event.results.length - 1][0].transcript.trim();
       if (isFinalResult) {
         if (currentStep.id === 'symptoms') {
-          setTranscript(prev => (prev ? `${prev} ${latestTranscript}` : latestTranscript));
+          setTranscript(prev => (prev ? `${prev} ${latestText}` : latestText));
         } else {
-          let filtered = latestTranscript;
-          if (currentStep.id === 'birth') filtered = latestTranscript.replace(/[^0-9년월일\s]/g, "");
-          if (currentStep.id === 'phone') filtered = latestTranscript.replace(/[^0-9]/g, "");
+          let filtered = latestText;
+          if (currentStep.id === 'birth') filtered = latestText.replace(/[^0-9년월일\s]/g, "");
+          if (currentStep.id === 'phone') filtered = latestText.replace(/[^0-9]/g, "");
           setTranscript(filtered);
         }
       }
       if (currentStep.id === 'symptoms' && isFinalResult) {
         clearTimeout(summaryTimeoutRef.current);
         summaryTimeoutRef.current = setTimeout(() => {
-          setTranscript(current => { summarizeSymptoms(current); return current; });
+          setTranscript(curr => { summarizeSymptoms(curr); return curr; });
         }, 1500);
       }
     };
@@ -134,8 +133,15 @@ const App = () => {
     recognition.start();
   };
 
+  const stopListening = () => {
+    if (recognitionRef.current) {
+      recognitionRef.current.stop();
+      setIsListening(false);
+    }
+  };
+
   const handleNextStep = async () => {
-    if (recognitionRef.current) recognitionRef.current.stop();
+    stopListening();
     window.speechSynthesis.cancel();
     const nextData = { ...formData };
     if (currentStep.id === 'name') nextData.name = transcript;
@@ -151,11 +157,11 @@ const App = () => {
     else { setCurrentStepIndex(prev => prev + 1); }
   };
 
-  const startIndividualEdit = (index) => {
+  const startIndividualEdit = (idx) => {
     setIsEditingMode(true);
     const keys = ['name', 'birth', 'phone', 'symptomsRaw'];
-    setTranscript(formData[keys[index]]);
-    setCurrentStepIndex(index + 1);
+    setTranscript(formData[keys[idx]]);
+    setCurrentStepIndex(idx + 1);
   };
 
   useEffect(() => {
@@ -163,87 +169,94 @@ const App = () => {
     if (currentStep.id === 'complete') sendToDiscord(formData);
   }, [currentStepIndex, speak]);
 
+  const VoiceIndicator = () => (
+    <div className="flex items-center justify-center space-x-1.5 h-10">
+      {[1, 2, 3, 4, 5, 6].map((i) => (
+        <div key={i} className={`w-1.5 bg-blue-500 rounded-full transition-all duration-300 ${isListening ? 'animate-bounce' : 'opacity-20'}`}
+          style={{ height: isListening ? `${Math.random() * 80 + 20}%` : '30%', animationDelay: `${i * 0.1}s` }} />
+      ))}
+    </div>
+  );
+
   return (
-    <div className="min-h-screen bg-slate-50 font-sans flex flex-col items-center p-4 sm:p-8">
+    <div className="min-h-screen bg-slate-50 font-sans text-slate-900 flex flex-col items-center p-4 sm:p-8">
       <div className="w-full max-w-xl mb-6 flex justify-between items-center">
-        <h1 className="text-xl font-black text-blue-900 flex items-center gap-2">
-          <span className="p-2 bg-blue-600 text-white rounded-xl shadow-lg">🦷</span>
-          서울복음치과
-        </h1>
+        <h1 className="text-xl font-black text-blue-900 flex items-center gap-2"><span className="p-2 bg-blue-600 text-white rounded-xl shadow-lg">🦷</span>서울복음치과</h1>
         <div className="text-sm font-bold text-blue-600">{currentStepIndex + 1} / {STEPS.length}</div>
       </div>
-      <main className="w-full max-w-xl bg-white rounded-[3rem] shadow-2xl border border-blue-50 overflow-hidden min-h-[580px] flex flex-col">
+      <main className="w-full max-w-xl bg-white rounded-[3rem] shadow-2xl border border-blue-50 overflow-hidden min-h-[580px] flex flex-col transition-all">
         <div className="p-10 bg-blue-600 text-white text-center relative overflow-hidden">
-          <div className="relative z-10">
-            <div className="mb-6 inline-flex items-center justify-center w-14 h-14 bg-white/20 rounded-2xl backdrop-blur-md border border-white/30">
+          <div className="relative z-10 flex flex-col items-center">
+            <div className="mb-6 w-14 h-14 bg-white/20 rounded-2xl backdrop-blur-md border border-white/30 flex items-center justify-center">
               {isSpeaking ? <Volume2 className="animate-pulse" size={28} /> : <div className="text-xl">🏥</div>}
             </div>
             <h2 className="text-2xl sm:text-3xl font-black leading-tight break-keep drop-shadow-sm">{currentStep.question}</h2>
           </div>
         </div>
         <div className="flex-1 p-8 flex flex-col">
-          {currentStep.id === 'welcome' && (
+          {currentStep.id === 'welcome' ? (
             <div className="flex-1 flex flex-col items-center justify-center">
-              <button onClick={() => setCurrentStepIndex(1)} className="group flex flex-col items-center gap-6 p-12 rounded-[2.5rem] bg-blue-50 hover:bg-blue-100 transition-all border-2 border-dashed border-blue-200 w-full active:scale-95">
+              <button onClick={() => setCurrentStepIndex(1)} className="group flex flex-col items-center gap-6 p-12 rounded-[3rem] bg-blue-50 hover:bg-blue-100 transition-all border-2 border-dashed border-blue-200 w-full active:scale-95 shadow-sm">
                 <div className="w-24 h-24 bg-blue-600 rounded-full flex items-center justify-center text-white shadow-xl group-hover:scale-110 transition-transform"><ChevronRight size={48} /></div>
                 <span className="text-2xl font-black text-blue-900">접수 시작하기</span>
               </button>
             </div>
-          )}
-          {['name', 'birth', 'phone', 'symptoms'].includes(currentStep.id) && (
+          ) : ['name', 'birth', 'phone', 'symptoms'].includes(currentStep.id) ? (
             <div className="w-full space-y-6 flex-1 flex flex-col">
               <div className="space-y-4 flex-1">
                 {currentStep.id === 'symptoms' ? (
                   <div className="space-y-4">
-                    <label className="text-xs font-black text-slate-400 ml-3 uppercase tracking-widest block">증상 말씀 (계속 이어서 말씀하세요)</label>
-                    <textarea value={transcript} onChange={(e) => setTranscript(e.target.value)} placeholder={currentStep.placeholder} className="w-full p-6 text-xl font-bold bg-slate-50 border-2 border-slate-100 rounded-[2rem] focus:border-blue-500 outline-none transition-all min-h-[150px] resize-none" />
+                    <label className="text-xs font-black text-slate-400 ml-3 uppercase tracking-widest block">목소리 기록 (이어서 말씀하세요)</label>
+                    <textarea value={transcript} onChange={(e) => setTranscript(e.target.value)} placeholder={currentStep.placeholder} className="w-full p-6 text-xl font-bold bg-slate-50 border-2 border-slate-100 rounded-[2rem] focus:border-blue-500 outline-none transition-all min-h-[160px] resize-none" />
                     <div className="p-5 bg-blue-50/50 border-2 border-dashed border-blue-200 rounded-[2rem]">
-                      <span className="text-[10px] font-black text-blue-600 uppercase tracking-widest block mb-2">원장님께 전달될 요약 내용</span>
-                      <p className="text-lg font-bold text-slate-700 leading-relaxed italic">{isProcessing ? "정리 중..." : (formData.symptomsSummary || "말씀하시면 환자분의 말투로 내용을 정리합니다.")}</p>
+                      <span className="text-[10px] font-black text-blue-600 uppercase tracking-widest block mb-2">원장님께 전달될 정리 내용</span>
+                      <p className="text-lg font-bold text-slate-700 leading-relaxed italic">{isProcessing ? "정리 중..." : (formData.symptomsSummary || "말씀하시면 환자분의 말투로 정리합니다.")}</p>
                     </div>
                   </div>
                 ) : (
                   <div className="relative">
                     <label className="text-xs font-black text-slate-400 ml-3 uppercase tracking-widest block mb-2">{currentStep.label}</label>
-                    <input type="text" value={transcript} onChange={(e) => setTranscript(e.target.value)} placeholder={currentStep.placeholder} className="w-full p-7 text-2xl font-black bg-slate-50 border-2 border-slate-100 rounded-[2rem] focus:border-blue-500 outline-none" />
+                    <input type="text" value={transcript} onChange={(e) => setTranscript(e.target.value)} placeholder={currentStep.placeholder} className="w-full p-8 text-2xl font-black bg-slate-50 border-2 border-slate-100 rounded-[2.5rem] focus:border-blue-500 outline-none" />
                   </div>
                 )}
               </div>
               <div className="pt-4 space-y-5">
                 <div className="flex gap-4">
-                  <button onClick={() => isListening ? recognitionRef.current.stop() : startListening()} className={`flex-1 py-6 rounded-[1.5rem] flex flex-col items-center justify-center gap-1 font-black transition-all shadow-lg ${isListening ? 'bg-red-500 text-white animate-pulse' : 'bg-white border-2 border-blue-600 text-blue-600 hover:bg-blue-50'}`}>{isListening ? <MicOff size={28} /> : <Mic size={28} />}<span className="text-[10px] uppercase tracking-widest">{isListening ? '정지' : '음성 입력'}</span></button>
-                  <button onClick={handleNextStep} disabled={!transcript && !isEditingMode} className="flex-[2] py-6 bg-blue-600 text-white rounded-[1.5rem] font-black text-xl flex items-center justify-center gap-3 hover:bg-blue-700 shadow-xl disabled:bg-slate-200">{isEditingMode ? '수정 완료' : '다음 단계'}<ArrowRight size={20} /></button>
+                  <button onClick={isListening ? stopListening : startListening} className={`flex-1 py-7 rounded-[2rem] flex flex-col items-center justify-center gap-1 font-black transition-all shadow-lg ${isListening ? 'bg-red-500 text-white animate-pulse' : 'bg-white border-2 border-blue-600 text-blue-600'}`}>{isListening ? <MicOff size={32} /> : <Mic size={32} />}{isListening ? '정지' : '음성 입력'}</button>
+                  <button onClick={handleNextStep} disabled={!transcript && !isEditingMode} className="flex-[2] py-7 bg-blue-600 text-white rounded-[2rem] font-black text-2xl flex items-center justify-center gap-3 hover:bg-blue-700 shadow-xl disabled:bg-slate-200">{isEditingMode ? '수정 완료' : '다음 단계'}<ArrowRight size={24} /></button>
                 </div>
+                <VoiceIndicator />
               </div>
             </div>
-          )}
-          {currentStep.id === 'confirm' && (
+          ) : currentStep.id === 'confirm' ? (
             <div className="w-full space-y-4">
               <div className="grid grid-cols-1 gap-3">
-                {[{ icon: <User size={18}/>, label: "성함", value: formData.name }, { icon: <Calendar size={18}/>, label: "생년월일", value: formData.birth }, { icon: <Phone size={18}/>, label: "연락처", value: formData.phone }, { icon: <Stethoscope size={18}/>, label: "증상 요약", value: formData.symptomsSummary || formData.symptomsRaw }].map((item, idx) => (
+                {[{ icon: <User size={18}/>, label: "성함", value: formData.name }, { icon: <Calendar size={18}/>, label: "생년월일", value: formData.birth }, { icon: <Phone size={18}/>, label: "연락처", value: formData.phone }, { icon: <Stethoscope size={18}/>, label: "불편하신 내용", value: formData.symptomsSummary || formData.symptomsRaw }].map((item, idx) => (
                   <button key={idx} onClick={() => startIndividualEdit(idx)} className="flex items-center justify-between p-5 bg-slate-50 rounded-3xl border border-slate-100 hover:border-blue-300 transition-all text-left w-full group">
-                    <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-4 text-left">
                       <div className="text-blue-500 bg-white p-3 rounded-2xl shadow-sm border border-blue-50 group-hover:bg-blue-600 group-hover:text-white transition-all">{item.icon}</div>
                       <div><p className="text-[10px] text-slate-400 uppercase font-black tracking-widest mb-0.5">{item.label}</p><p className="text-lg font-bold text-slate-800 line-clamp-1">{item.value || "미입력"}</p></div>
-                    </div>
-                    <Edit3 size={18} className="text-slate-300 group-hover:text-blue-500" />
-                  </button>
-                ))}
+                    </div><Edit3 size={18} className="text-slate-300 group-hover:text-blue-500" /></button>))}
               </div>
-              <button onClick={handleNextStep} className="w-full mt-6 py-7 bg-blue-600 text-white rounded-[2rem] font-black text-2xl flex items-center justify-center gap-4 hover:bg-blue-700 shadow-2xl active:scale-95 transition-all">최종 접수 완료<Send size={24} /></button>
+              <button onClick={handleNextStep} className="w-full mt-6 py-8 bg-blue-600 text-white rounded-[2.5rem] font-black text-2xl flex items-center justify-center gap-4 hover:bg-blue-700 shadow-2xl active:scale-95 transition-all">최종 접수 완료<Send size={28} /></button>
             </div>
-          )}
-          {currentStep.id === 'complete' && (
-            <div className="flex-1 flex flex-col items-center justify-center text-center">
-              <CheckCircle size={70} className="text-green-500 mb-6" />
-              <h3 className="text-3xl font-black text-slate-900 mb-4 tracking-tight">접수가 완료되었습니다!</h3>
-              <p className="text-slate-600 text-lg font-bold">원장님께서 확인하신 후, 곧 연락을 드리겠습니다.</p>
+          ) : (
+            <div className="flex-1 flex flex-col items-center justify-center text-center py-6">
+              <div className="relative mb-12">
+                <div className="absolute inset-0 bg-green-200 rounded-full animate-ping opacity-20" />
+                <div className="relative w-32 h-32 bg-green-100 text-green-600 rounded-full flex items-center justify-center shadow-inner border-4 border-white"><CheckCircle size={80} strokeWidth={2.5} /></div>
+              </div>
+              <h3 className="text-4xl font-black text-slate-900 mb-6 tracking-tight">접수가 잘 되었습니다!</h3>
+              <div className="space-y-4 p-10 bg-slate-50 rounded-[3rem] border border-dashed border-slate-200 shadow-sm relative overflow-hidden">
+                <p className="text-slate-600 text-xl font-bold relative z-10">원장님께서 확인하신 후,<br /><span className="text-blue-700 text-2xl font-black">곧 연락을 드리겠습니다.</span></p>
+                <div className="pt-6 border-t border-slate-200 relative z-10"><p className="text-slate-400 font-bold">데스크 근처에서 잠시만 대기해 주세요.</p></div>
+              </div>
             </div>
           )}
         </div>
       </main>
+      <footer className="mt-10 text-slate-400 text-[10px] font-black tracking-[0.3em] flex items-center gap-4">SEOUL GOSPEL DENTAL CLINIC</footer>
     </div>
   );
 };
-
 export default App;
