@@ -3,6 +3,7 @@ import { Mic, MicOff, CheckCircle, ChevronRight, User, Calendar, Phone, Stethosc
 
 // --- CONFIGURATION ---
 const DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1453637431629975633/4iR14c4AHq_OLoy1iWJqHeZrsAUpsbwDrSTb45KVy99zCzM5hNM7vTWDisUUW_bDIgNU";
+// Vercel 환경 변수 권장. 로컬 테스트용 키 삽입.
 const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY || "AIzaSyDG0fMMZ3FuArDTVtcWwS7bOpVLxcmg3nw";
 const GEMINI_MODEL = "gemini-2.5-flash-preview-09-2025";
 
@@ -36,26 +37,26 @@ const App = () => {
   const summaryTimeoutRef = useRef(null);
   const currentStep = STEPS[currentStepIndex];
 
-  // --- 1. AI Content Generation (Gemini with Backoff) ---
+  // --- 1. AI Content Generation (Gemini) ---
   const summarizeSymptoms = async (rawText) => {
-    if (!rawText || rawText.length < 3) return;
-    if (!GEMINI_API_KEY) {
-      console.warn("Gemini API Key is missing.");
-      return;
-    }
+    if (!rawText || rawText.trim().length < 3) return;
 
     setIsProcessing(true);
 
-    // 말투 수정: 원장님께 직접 말하는 환자의 1인칭 말투로 프롬프트 강화
-    const systemPrompt = "당신은 치과에 방문한 환자입니다. 원장님(의사)에게 당신의 증상을 직접 설명하는 친절하고 자연스러운 1인칭 말투로 요약하세요. (~해서 왔어요, ~가 아파요). 핵심 증상 위주로 요약된 문장만 한 줄로 출력하세요. 예: '원장님, 왼쪽 아래 어금니가 찬 거 마실 때마다 너무 시리고 아파요.'";
+    // 환자가 원장님께 직접 말하는 1인칭 자연스러운 대화체 요약 프롬프트
+    const systemPrompt = "당신은 치과 환자입니다. 원장님(의사)에게 당신의 증상을 직접 설명하는 친절하고 자연스러운 1인칭 말투로 요약하세요. (~해서 왔어요, ~가 아파요). 핵심 증상 위주로 요약된 문장만 한 줄로 출력하세요. 예: '원장님, 왼쪽 아래 어금니가 찬 거 마실 때마다 너무 시리고 아파요.'";
 
     const fetchWithRetry = async (retries = 5, delay = 1000) => {
+      if (!GEMINI_API_KEY) {
+        throw new Error("API 키가 설정되지 않았습니다.");
+      }
+
       try {
         const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            contents: [{ parts: [{ text: `환자가 횡설수설하며 말한 내용: ${rawText}` }] }],
+            contents: [{ parts: [{ text: `환자 음성 내용: ${rawText}` }] }],
             systemInstruction: { parts: [{ text: systemPrompt }] }
           })
         });
@@ -68,22 +69,23 @@ const App = () => {
         if (text) {
           setFormData(prev => ({ ...prev, symptomsSummary: text.trim() }));
           setError('');
-        } else {
-          throw new Error("Invalid response format");
         }
       } catch (err) {
         if (retries > 0) {
           await new Promise(res => setTimeout(res, delay));
           return fetchWithRetry(retries - 1, delay * 2);
         } else {
-          console.error("Gemini summary failed after retries.");
+          console.error("Gemini summary failed:", err);
+          setError("AI 요약 중 오류가 발생했습니다. 원문을 그대로 사용합니다.");
         }
-      } finally {
-        setIsProcessing(false);
       }
     };
 
-    await fetchWithRetry();
+    try {
+      await fetchWithRetry();
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   const sendToDiscord = async (finalData) => {
@@ -144,14 +146,15 @@ const App = () => {
 
       if (isFinalResult) {
         if (currentStep.id === 'symptoms') {
-          setTranscript(prev => (prev ? `${prev} ${latestText}` : latestText));
-          clearTimeout(summaryTimeoutRef.current);
-          summaryTimeoutRef.current = setTimeout(() => {
-            setTranscript(curr => {
-              summarizeSymptoms(curr);
-              return curr;
-            });
-          }, 1500);
+          // 상태 업데이트 후 요약 호출 로직 개선
+          setTranscript(prev => {
+            const newTranscript = prev ? `${prev} ${latestText}` : latestText;
+            clearTimeout(summaryTimeoutRef.current);
+            summaryTimeoutRef.current = setTimeout(() => {
+              summarizeSymptoms(newTranscript);
+            }, 1200);
+            return newTranscript;
+          });
         } else {
           let filtered = latestText;
           if (currentStep.id === 'birth') filtered = latestText.replace(/[^0-9년월일\s]/g, "");
@@ -240,11 +243,11 @@ const App = () => {
               <div className="space-y-4 flex-1">
                 {currentStep.id === 'symptoms' ? (
                   <div className="space-y-4">
-                    <label className="text-xs font-black text-slate-400 ml-3 uppercase tracking-widest block">불편사항 말씀 (이어서 말씀하세요)</label>
+                    <label className="text-xs font-black text-slate-400 ml-3 uppercase tracking-widest block font-black">불편사항 말씀 (이어서 계속 말씀하세요)</label>
                     <textarea value={transcript} onChange={(e) => setTranscript(e.target.value)} placeholder={currentStep.placeholder} className="w-full p-6 text-xl font-bold bg-slate-50 border-2 border-slate-100 rounded-[2rem] focus:border-blue-500 outline-none transition-all min-h-[160px] resize-none shadow-inner" />
                     <div className="p-5 bg-blue-50/50 border-2 border-dashed border-blue-200 rounded-[2rem]">
-                      <span className="text-[10px] font-black text-blue-600 uppercase tracking-widest block mb-2 font-black italic">원장님께 드릴 말씀 (AI 실시간 정리)</span>
-                      <p className="text-lg font-bold text-slate-700 leading-relaxed italic">{isProcessing ? "정리 중..." : (formData.symptomsSummary || "말씀하시면 내용을 자연스럽게 정리합니다.")}</p>
+                      <span className="text-[10px] font-black text-blue-600 uppercase tracking-widest block mb-2 font-black italic">원장님께 드릴 말씀 (AI 실시간 정리 중)</span>
+                      <p className="text-lg font-bold text-slate-700 leading-relaxed italic">{isProcessing ? "환자분의 말투로 정리 중입니다..." : (formData.symptomsSummary || "말씀하시면 내용을 자연스럽게 정리합니다.")}</p>
                     </div>
                   </div>
                 ) : (
@@ -265,7 +268,7 @@ const App = () => {
           ) : currentStep.id === 'confirm' ? (
             <div className="w-full space-y-4">
               <div className="grid grid-cols-1 gap-3">
-                {[{ icon: <User size={18}/>, label: "성함", value: formData.name }, { icon: <Calendar size={18}/>, label: "생년월일", value: formData.birth }, { icon: <Phone size={18}/>, label: "연락처", value: formData.phone }, { icon: <Stethoscope size={18}/>, label: "불편하신 내용", value: formData.symptomsSummary || formData.symptomsRaw }].map((item, idx) => (
+                {[{ icon: <User size={18}/>, label: "성함", value: formData.name }, { icon: <Calendar size={18}/>, label: "생년월일", value: formData.birth }, { icon: <Phone size={18}/>, label: "연락처", value: formData.phone }, { icon: <Stethoscope size={18}/>, label: "원장님께 드릴 말씀", value: formData.symptomsSummary || formData.symptomsRaw }].map((item, idx) => (
                   <button key={idx} onClick={() => startIndividualEdit(idx)} className="flex items-center justify-between p-5 bg-slate-50 rounded-3xl border border-slate-100 hover:border-blue-300 transition-all text-left w-full group shadow-sm">
                     <div className="flex items-center gap-4 text-left">
                       <div className="text-blue-500 bg-white p-3 rounded-2xl shadow-sm border border-blue-50 group-hover:bg-blue-600 group-hover:text-white transition-all">{item.icon}</div>
