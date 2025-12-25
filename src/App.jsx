@@ -3,8 +3,6 @@ import { Mic, MicOff, CheckCircle, ChevronRight, User, Calendar, Phone, Stethosc
 
 // --- CONFIGURATION ---
 const DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1453637431629975633/4iR14c4AHq_OLoy1iWJqHeZrsAUpsbwDrSTb45KVy99zCzM5hNM7vTWDisUUW_bDIgNU";
-// Vercel 배포 시 환경 변수 VITE_GEMINI_API_KEY에 원장님의 키를 입력해주세요.
-// 로컬 테스트를 위해 아래 "" 사이에 키를 직접 넣으셔도 됩니다.
 const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY || "AIzaSyDG0fMMZ3FuArDTVtcWwS7bOpVLxcmg3nw";
 const GEMINI_MODEL = "gemini-2.5-flash-preview-09-2025";
 
@@ -47,7 +45,9 @@ const App = () => {
     }
 
     setIsProcessing(true);
-    const systemPrompt = "당신은 노련한 치과 위생사입니다. 환자가 말한 불편 사항을 원장님께 직접 설명하는 듯한 '자연스러운 1인칭 문장'으로 짧고 명확하게 요약하세요. (예: ~가 아파서 왔어요). 요약된 문장만 한 줄로 출력하세요.";
+
+    // 말투 수정: 원장님께 직접 말하는 환자의 1인칭 말투로 프롬프트 강화
+    const systemPrompt = "당신은 치과에 방문한 환자입니다. 원장님(의사)에게 당신의 증상을 직접 설명하는 친절하고 자연스러운 1인칭 말투로 요약하세요. (~해서 왔어요, ~가 아파요). 핵심 증상 위주로 요약된 문장만 한 줄로 출력하세요. 예: '원장님, 왼쪽 아래 어금니가 찬 거 마실 때마다 너무 시리고 아파요.'";
 
     const fetchWithRetry = async (retries = 5, delay = 1000) => {
       try {
@@ -55,7 +55,7 @@ const App = () => {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            contents: [{ parts: [{ text: `환자 음성 내용: ${rawText}` }] }],
+            contents: [{ parts: [{ text: `환자가 횡설수설하며 말한 내용: ${rawText}` }] }],
             systemInstruction: { parts: [{ text: systemPrompt }] }
           })
         });
@@ -77,7 +77,6 @@ const App = () => {
           return fetchWithRetry(retries - 1, delay * 2);
         } else {
           console.error("Gemini summary failed after retries.");
-          // 요약 실패 시 원문을 유지하되 에러는 표시하지 않음 (사용자 경험 보호)
         }
       } finally {
         setIsProcessing(false);
@@ -95,8 +94,8 @@ const App = () => {
         { name: "👤 성함", value: finalData.name || "미기입", inline: true },
         { name: "🎂 생년월일", value: finalData.birth || "미기입", inline: true },
         { name: "📞 연락처", value: finalData.phone || "미기입", inline: true },
-        { name: "📝 증상 요약 (AI)", value: finalData.symptomsSummary || finalData.symptomsRaw || "내용 없음" },
-        { name: "🎤 원문 기록", value: finalData.symptomsRaw || "기록 없음" }
+        { name: "📝 환자가 전하는 증상", value: finalData.symptomsSummary || finalData.symptomsRaw || "내용 없음" },
+        { name: "🎤 음성 기록 원문", value: finalData.symptomsRaw || "기록 없음" }
       ],
       timestamp: new Date().toISOString()
     };
@@ -146,7 +145,6 @@ const App = () => {
       if (isFinalResult) {
         if (currentStep.id === 'symptoms') {
           setTranscript(prev => (prev ? `${prev} ${latestText}` : latestText));
-          // 증상 입력 시 1.5초 대기 후 요약 호출
           clearTimeout(summaryTimeoutRef.current);
           summaryTimeoutRef.current = setTimeout(() => {
             setTranscript(curr => {
@@ -245,7 +243,7 @@ const App = () => {
                     <label className="text-xs font-black text-slate-400 ml-3 uppercase tracking-widest block">불편사항 말씀 (이어서 말씀하세요)</label>
                     <textarea value={transcript} onChange={(e) => setTranscript(e.target.value)} placeholder={currentStep.placeholder} className="w-full p-6 text-xl font-bold bg-slate-50 border-2 border-slate-100 rounded-[2rem] focus:border-blue-500 outline-none transition-all min-h-[160px] resize-none shadow-inner" />
                     <div className="p-5 bg-blue-50/50 border-2 border-dashed border-blue-200 rounded-[2rem]">
-                      <span className="text-[10px] font-black text-blue-600 uppercase tracking-widest block mb-2 font-black">AI 실시간 요약 (원장님께 전달될 내용)</span>
+                      <span className="text-[10px] font-black text-blue-600 uppercase tracking-widest block mb-2 font-black italic">원장님께 드릴 말씀 (AI 실시간 정리)</span>
                       <p className="text-lg font-bold text-slate-700 leading-relaxed italic">{isProcessing ? "정리 중..." : (formData.symptomsSummary || "말씀하시면 내용을 자연스럽게 정리합니다.")}</p>
                     </div>
                   </div>
