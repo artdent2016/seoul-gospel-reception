@@ -3,8 +3,9 @@ import { Mic, MicOff, CheckCircle, ChevronRight, User, Calendar, Phone, Stethosc
 
 // --- CONFIGURATION ---
 const DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1453637431629975633/4iR14c4AHq_OLoy1iWJqHeZrsAUpsbwDrSTb45KVy99zCzM5hNM7vTWDisUUW_bDIgNU";
-// Vercel 환경 변수 권장. 로컬 테스트용 키 삽입.
-const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY || "AIzaSyDG0fMMZ3FuArDTVtcWwS7bOpVLxcmg3nw";
+const apiKey = ""; // 시스템 환경에서 자동 할당되지만, 배포 시에는 아래 직접 입력 방식을 사용합니다.
+const DEPLOY_API_KEY = "AIzaSyDG0fMMZ3FuArDTVtcWwS7bOpVLxcmg3nw";
+const FINAL_API_KEY = apiKey || DEPLOY_API_KEY;
 const GEMINI_MODEL = "gemini-2.5-flash-preview-09-2025";
 
 const STEPS = [
@@ -42,27 +43,20 @@ const App = () => {
     if (!rawText || rawText.trim().length < 3) return;
 
     setIsProcessing(true);
-
-    // 환자가 원장님께 직접 말하는 1인칭 자연스러운 대화체 요약 프롬프트
     const systemPrompt = "당신은 치과 환자입니다. 원장님(의사)에게 당신의 증상을 직접 설명하는 친절하고 자연스러운 1인칭 말투로 요약하세요. (~해서 왔어요, ~가 아파요). 핵심 증상 위주로 요약된 문장만 한 줄로 출력하세요. 예: '원장님, 왼쪽 아래 어금니가 찬 거 마실 때마다 너무 시리고 아파요.'";
 
     const fetchWithRetry = async (retries = 5, delay = 1000) => {
-      if (!GEMINI_API_KEY) {
-        throw new Error("API 키가 설정되지 않았습니다.");
-      }
-
       try {
-        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`, {
+        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${FINAL_API_KEY}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            contents: [{ parts: [{ text: `환자 음성 내용: ${rawText}` }] }],
+            contents: [{ parts: [{ text: `환자 음성 기록: ${rawText}` }] }],
             systemInstruction: { parts: [{ text: systemPrompt }] }
           })
         });
 
         if (!response.ok) throw new Error(`API error: ${response.status}`);
-
         const data = await response.json();
         const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
 
@@ -76,7 +70,6 @@ const App = () => {
           return fetchWithRetry(retries - 1, delay * 2);
         } else {
           console.error("Gemini summary failed:", err);
-          setError("AI 요약 중 오류가 발생했습니다. 원문을 그대로 사용합니다.");
         }
       }
     };
@@ -84,7 +77,7 @@ const App = () => {
     try {
       await fetchWithRetry();
     } finally {
-      setIsProcessing(false);
+      setIsProcessing(false); // 무조건 로딩 해제
     }
   };
 
@@ -107,7 +100,7 @@ const App = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ embeds: [embed] })
       });
-    } catch (err) { console.error("Discord send error:", err); }
+    } catch (err) { console.error("Discord error:", err); }
   };
 
   const speak = useCallback((text) => {
@@ -126,39 +119,30 @@ const App = () => {
 
   const startListening = () => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      setError("크롬 브라우저를 사용해 주세요.");
-      return;
-    }
+    if (!SpeechRecognition) return;
     if (isListening) return;
     const recognition = new SpeechRecognition();
     recognition.lang = 'ko-KR';
     recognition.interimResults = true;
     recognition.continuous = true;
     recognitionRef.current = recognition;
-    recognition.onstart = () => {
-      setIsListening(true);
-      setError('');
-    };
+    recognition.onstart = () => setIsListening(true);
     recognition.onresult = (event) => {
-      const isFinalResult = event.results[event.results.length - 1].isFinal;
-      const latestText = event.results[event.results.length - 1][0].transcript.trim();
+      const isFinal = event.results[event.results.length - 1].isFinal;
+      const text = event.results[event.results.length - 1][0].transcript.trim();
 
-      if (isFinalResult) {
+      if (isFinal) {
         if (currentStep.id === 'symptoms') {
-          // 상태 업데이트 후 요약 호출 로직 개선
           setTranscript(prev => {
-            const newTranscript = prev ? `${prev} ${latestText}` : latestText;
+            const next = prev ? `${prev} ${text}` : text;
             clearTimeout(summaryTimeoutRef.current);
-            summaryTimeoutRef.current = setTimeout(() => {
-              summarizeSymptoms(newTranscript);
-            }, 1200);
-            return newTranscript;
+            summaryTimeoutRef.current = setTimeout(() => summarizeSymptoms(next), 1200);
+            return next;
           });
         } else {
-          let filtered = latestText;
-          if (currentStep.id === 'birth') filtered = latestText.replace(/[^0-9년월일\s]/g, "");
-          if (currentStep.id === 'phone') filtered = latestText.replace(/[^0-9]/g, "");
+          let filtered = text;
+          if (currentStep.id === 'birth') filtered = text.replace(/[^0-9년월일\s]/g, "");
+          if (currentStep.id === 'phone') filtered = text.replace(/[^0-9]/g, "");
           setTranscript(filtered);
         }
       }
@@ -167,28 +151,34 @@ const App = () => {
     recognition.start();
   };
 
-  const stopListening = () => {
-    if (recognitionRef.current) {
-      recognitionRef.current.stop();
-      setIsListening(false);
+  const handleNextStep = () => {
+    if (recognitionRef.current) recognitionRef.current.stop();
+    window.speechSynthesis.cancel();
+
+    const stepId = currentStep.id;
+    setFormData(prev => {
+      const nextData = { ...prev };
+      if (stepId === 'name') nextData.name = transcript;
+      else if (stepId === 'birth') nextData.birth = transcript;
+      else if (stepId === 'phone') nextData.phone = transcript;
+      else if (stepId === 'symptoms') nextData.symptomsRaw = transcript;
+      return nextData;
+    });
+
+    setTranscript('');
+
+    if (isEditingMode) {
+      setCurrentStepIndex(5); // 확인 페이지(Confirm)로만 복귀
+      setIsEditingMode(false);
+    } else {
+      setCurrentStepIndex(prev => prev + 1);
     }
   };
 
-  const handleNextStep = async () => {
-    stopListening();
-    window.speechSynthesis.cancel();
-    const nextData = { ...formData };
-    if (currentStep.id === 'name') nextData.name = transcript;
-    else if (currentStep.id === 'birth') nextData.birth = transcript;
-    else if (currentStep.id === 'phone') nextData.phone = transcript;
-    else if (currentStep.id === 'symptoms') {
-      nextData.symptomsRaw = transcript;
-      if (!nextData.symptomsSummary) await summarizeSymptoms(transcript);
-    }
-    setFormData(nextData);
-    setTranscript('');
-    if (isEditingMode) { setCurrentStepIndex(5); setIsEditingMode(false); }
-    else { setCurrentStepIndex(prev => prev + 1); }
+  // 최종 전송 버튼 클릭 시에만 실행되는 로직
+  const handleFinalSubmit = async () => {
+    await sendToDiscord(formData);
+    setCurrentStepIndex(6); // 완료 페이지로 이동
   };
 
   const startIndividualEdit = (idx) => {
@@ -199,8 +189,10 @@ const App = () => {
   };
 
   useEffect(() => {
-    if (currentStepIndex > 0 || currentStep.id === 'welcome') speak(currentStep.question);
-    if (currentStep.id === 'complete') sendToDiscord(formData);
+    // 음성 안내만 담당
+    if (currentStepIndex > 0 || currentStep.id === 'welcome') {
+      speak(currentStep.question);
+    }
   }, [currentStepIndex, speak]);
 
   const VoiceIndicator = () => (
@@ -215,16 +207,13 @@ const App = () => {
   return (
     <div className="min-h-screen bg-slate-50 font-sans text-slate-900 flex flex-col items-center p-4 sm:p-8">
       <div className="w-full max-w-xl mb-6 flex justify-between items-center">
-        <h1 className="text-xl font-black text-blue-900 flex items-center gap-2">
-          <span className="p-2 bg-blue-600 text-white rounded-xl shadow-lg">🦷</span>
-          서울복음치과
-        </h1>
+        <h1 className="text-xl font-black text-blue-900 flex items-center gap-2"><span className="p-2 bg-blue-600 text-white rounded-xl shadow-lg">🦷</span>서울복음치과</h1>
         <div className="text-sm font-bold text-blue-600">{currentStepIndex + 1} / {STEPS.length}</div>
       </div>
-      <main className="w-full max-w-xl bg-white rounded-[3rem] shadow-2xl border border-blue-50 overflow-hidden min-h-[580px] flex flex-col transition-all">
+      <main className="w-full max-w-xl bg-white rounded-[3rem] shadow-2xl border border-blue-50 overflow-hidden min-h-[580px] flex flex-col">
         <div className="p-10 bg-blue-600 text-white text-center relative overflow-hidden">
           <div className="relative z-10 flex flex-col items-center">
-            <div className="mb-6 w-14 h-14 bg-white/20 rounded-2xl backdrop-blur-md border border-white/30 flex items-center justify-center shadow-inner">
+            <div className="mb-6 w-14 h-14 bg-white/20 rounded-2xl backdrop-blur-md border border-white/30 flex items-center justify-center">
               {isSpeaking ? <Volume2 className="animate-pulse" size={28} /> : <div className="text-xl">🏥</div>}
             </div>
             <h2 className="text-2xl sm:text-3xl font-black leading-tight break-keep drop-shadow-sm">{currentStep.question}</h2>
@@ -233,7 +222,7 @@ const App = () => {
         <div className="flex-1 p-8 flex flex-col">
           {currentStep.id === 'welcome' ? (
             <div className="flex-1 flex flex-col items-center justify-center">
-              <button onClick={() => setCurrentStepIndex(1)} className="group flex flex-col items-center gap-6 p-12 rounded-[3rem] bg-blue-50 hover:bg-blue-100 transition-all border-2 border-dashed border-blue-200 w-full active:scale-95 shadow-sm">
+              <button onClick={() => setCurrentStepIndex(1)} className="group flex flex-col items-center gap-6 p-12 rounded-[3rem] bg-blue-50 hover:bg-blue-100 transition-all border-2 border-dashed border-blue-200 w-full shadow-sm">
                 <div className="w-24 h-24 bg-blue-600 rounded-full flex items-center justify-center text-white shadow-xl group-hover:scale-110 transition-transform"><ChevronRight size={48} /></div>
                 <span className="text-2xl font-black text-blue-900">접수 시작하기</span>
               </button>
@@ -246,7 +235,7 @@ const App = () => {
                     <label className="text-xs font-black text-slate-400 ml-3 uppercase tracking-widest block font-black">불편사항 말씀 (이어서 계속 말씀하세요)</label>
                     <textarea value={transcript} onChange={(e) => setTranscript(e.target.value)} placeholder={currentStep.placeholder} className="w-full p-6 text-xl font-bold bg-slate-50 border-2 border-slate-100 rounded-[2rem] focus:border-blue-500 outline-none transition-all min-h-[160px] resize-none shadow-inner" />
                     <div className="p-5 bg-blue-50/50 border-2 border-dashed border-blue-200 rounded-[2rem]">
-                      <span className="text-[10px] font-black text-blue-600 uppercase tracking-widest block mb-2 font-black italic">원장님께 드릴 말씀 (AI 실시간 정리 중)</span>
+                      <span className="text-[10px] font-black text-blue-600 uppercase tracking-widest block mb-2 font-black italic">원장님께 드릴 말씀 (AI 실시간 정리)</span>
                       <p className="text-lg font-bold text-slate-700 leading-relaxed italic">{isProcessing ? "환자분의 말투로 정리 중입니다..." : (formData.symptomsSummary || "말씀하시면 내용을 자연스럽게 정리합니다.")}</p>
                     </div>
                   </div>
@@ -259,8 +248,8 @@ const App = () => {
               </div>
               <div className="pt-4 space-y-5">
                 <div className="flex gap-4">
-                  <button onClick={isListening ? stopListening : startListening} className={`flex-1 py-7 rounded-[2rem] flex flex-col items-center justify-center gap-1 font-black transition-all shadow-lg ${isListening ? 'bg-red-500 text-white animate-pulse' : 'bg-white border-2 border-blue-600 text-blue-600 hover:bg-blue-50'}`}>{isListening ? <MicOff size={32} /> : <Mic size={32} />}{isListening ? '정지' : '음성 입력'}</button>
-                  <button onClick={handleNextStep} disabled={!transcript && !isEditingMode} className="flex-[2] py-7 bg-blue-600 text-white rounded-[2rem] font-black text-2xl flex items-center justify-center gap-3 hover:bg-blue-700 shadow-xl disabled:bg-slate-200 active:scale-95 transition-transform">{isEditingMode ? '수정 완료' : '다음 단계'}<ArrowRight size={24} /></button>
+                  <button onClick={isListening ? () => recognitionRef.current.stop() : startListening} className={`flex-1 py-7 rounded-[2rem] flex flex-col items-center justify-center gap-1 font-black transition-all shadow-lg ${isListening ? 'bg-red-500 text-white animate-pulse' : 'bg-white border-2 border-blue-600 text-blue-600 hover:bg-blue-50'}`}>{isListening ? <MicOff size={32} /> : <Mic size={32} />}{isListening ? '정지' : '음성 입력'}</button>
+                  <button onClick={handleNextStep} disabled={!transcript && !isEditingMode} className="flex-[2] py-7 bg-blue-600 text-white rounded-[2rem] font-black text-2xl flex items-center justify-center gap-3 hover:bg-blue-700 shadow-xl disabled:bg-slate-200">{isEditingMode ? '수정 완료' : '다음 단계'}<ArrowRight size={24} /></button>
                 </div>
                 <VoiceIndicator />
               </div>
@@ -275,7 +264,7 @@ const App = () => {
                       <div><p className="text-[10px] text-slate-400 uppercase font-black tracking-widest mb-0.5">{item.label}</p><p className="text-lg font-bold text-slate-800 line-clamp-1">{item.value || "미입력"}</p></div>
                     </div><Edit3 size={18} className="text-slate-300 group-hover:text-blue-500" /></button>))}
               </div>
-              <button onClick={handleNextStep} className="w-full mt-6 py-8 bg-blue-600 text-white rounded-[2.5rem] font-black text-2xl flex items-center justify-center gap-4 hover:bg-blue-700 shadow-2xl active:scale-95 transition-all">최종 접수 완료<Send size={28} /></button>
+              <button onClick={handleFinalSubmit} className="w-full mt-6 py-8 bg-blue-600 text-white rounded-[2.5rem] font-black text-2xl flex items-center justify-center gap-4 hover:bg-blue-700 shadow-2xl active:scale-95 transition-all">최종 접수 완료<Send size={28} /></button>
             </div>
           ) : (
             <div className="flex-1 flex flex-col items-center justify-center text-center py-6">
