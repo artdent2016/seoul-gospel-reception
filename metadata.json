@@ -1,0 +1,7 @@
+{
+  "name": "서울복음치과 증상 접수",
+  "description": "A voice-assisted patient consultation web app that collects patient info, summarizes symptoms using Gemini, and prepares reports for medical staff.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
